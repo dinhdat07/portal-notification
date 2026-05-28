@@ -1,0 +1,7 @@
+.env*
+!.env.example
+tmp/
+logs/
+*.log
+coverage*
+*.exe
