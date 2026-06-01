@@ -10,6 +10,7 @@ import (
 	kafkax "portal-notification/internal/infrastructure/kafka"
 	logger "portal-notification/internal/infrastructure/logger"
 	metricsx "portal-notification/internal/infrastructure/metrics"
+	"portal-notification/internal/infrastructure/database"
 	smtpx "portal-notification/internal/infrastructure/smtp"
 	"portal-notification/internal/model"
 	"portal-notification/internal/repository/impl"
@@ -17,8 +18,6 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
 func New() (*App, error) {
@@ -54,7 +53,7 @@ func New() (*App, error) {
 		return nil, fmt.Errorf("verify smtp connection: %w", err)
 	}
 
-	db, err := gorm.Open(postgres.Open(cfg.DBUrl), &gorm.Config{})
+	db, err := database.GetInstance(cfg.DBUrl)
 	if err != nil {
 		return nil, err
 	}
