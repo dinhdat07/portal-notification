@@ -1,19 +1,19 @@
 package metrics
 
-type NoopEmailMetrics struct{}
+type NoopWorkerMetrics struct{}
 
-var _ EmailMetrics = NoopEmailMetrics{}
+var _ WorkerMetrics = NoopWorkerMetrics{}
 
-func (NoopEmailMetrics) EventConsumed(notificationType string)           {}
-func (NoopEmailMetrics) EventInvalid(reason string)                      {}
-func (NoopEmailMetrics) DeliveryCreated(notificationType string)         {}
-func (NoopEmailMetrics) DeliveryDuplicate(status string)                 {}
-func (NoopEmailMetrics) EmailSent(notificationType string)               {}
-func (NoopEmailMetrics) EmailFailed(notificationType string)             {}
-func (NoopEmailMetrics) RetryScheduled(notificationType string)          {}
-func (NoopEmailMetrics) DeadLettered(notificationType string)            {}
-func (NoopEmailMetrics) Expired(notificationType string)                 {}
-func (NoopEmailMetrics) Superseded(notificationType string, count int64) {}
+func (NoopWorkerMetrics) EventConsumed(notificationType string)           {}
+func (NoopWorkerMetrics) EventInvalid(reason string)                      {}
+func (NoopWorkerMetrics) DeliveryCreated(notificationType string)         {}
+func (NoopWorkerMetrics) DeliveryDuplicate(status string)                 {}
+func (NoopWorkerMetrics) DeliverySent(notificationType string, channel string) {}
+func (NoopWorkerMetrics) DeliveryFailed(notificationType string, channel string) {}
+func (NoopWorkerMetrics) RetryScheduled(notificationType string)          {}
+func (NoopWorkerMetrics) DeadLettered(notificationType string)            {}
+func (NoopWorkerMetrics) Expired(notificationType string)                 {}
+func (NoopWorkerMetrics) Superseded(notificationType string, count int64) {}
 
 type NoopRetryMetrics struct{}
 
@@ -22,6 +22,6 @@ var _ RetryMetrics = NoopRetryMetrics{}
 func (NoopRetryMetrics) RetryBatchClaimed(count int)            {}
 func (NoopRetryMetrics) Expired(notificationType string)        {}
 func (NoopRetryMetrics) DeadLettered(notificationType string)   {}
-func (NoopRetryMetrics) EmailFailed(notificationType string)    {}
-func (NoopRetryMetrics) EmailSent(notificationType string)      {}
+func (NoopRetryMetrics) DeliveryFailed(notificationType string, channel string) {}
+func (NoopRetryMetrics) DeliverySent(notificationType string, channel string)   {}
 func (NoopRetryMetrics) RetryScheduled(notificationType string) {}

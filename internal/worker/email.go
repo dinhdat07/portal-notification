@@ -9,6 +9,7 @@ import (
 	"math/rand/v2"
 	"time"
 
+	"portal-notification/internal/channel"
 	notificationmetrics "portal-notification/internal/metrics"
 	"portal-notification/internal/model"
 	"portal-notification/internal/repository"
@@ -34,10 +35,6 @@ type Consumer interface {
 	Close() error
 }
 
-type EmailSender interface {
-	Send(ctx context.Context, template string, to string, name string, data map[string]any) error
-}
-
 type Config struct {
 	FetchRetryInitialBackoff    time.Duration
 	FetchRetryMaxBackoff        time.Duration
@@ -49,21 +46,23 @@ type Config struct {
 
 type Worker struct {
 	consumer     Consumer
-	emailSender  EmailSender
+	router       *Router
+	factories    map[string]channel.NotificationFactory
 	deliveryRepo repository.DeliveryRepository
 	txManager    repository.TxManager
 	logger       *slog.Logger
-	metrics      notificationmetrics.EmailMetrics
+	metrics      notificationmetrics.WorkerMetrics
 	cfg          Config
 }
 
 func NewWorker(
 	consumer Consumer,
-	emailSender EmailSender,
+	router *Router,
+	factories map[string]channel.NotificationFactory,
 	txManager repository.TxManager,
 	deliveryRepo repository.DeliveryRepository,
 	logger *slog.Logger,
-	metrics notificationmetrics.EmailMetrics,
+	metrics notificationmetrics.WorkerMetrics,
 	cfg Config,
 ) *Worker {
 	if cfg.FetchRetryInitialBackoff <= 0 {
@@ -88,12 +87,13 @@ func NewWorker(
 		logger = slog.Default()
 	}
 	if metrics == nil {
-		metrics = notificationmetrics.NoopEmailMetrics{}
+		metrics = notificationmetrics.NoopWorkerMetrics{}
 	}
 
 	return &Worker{
 		consumer:     consumer,
-		emailSender:  emailSender,
+		router:       router,
+		factories:    factories,
 		deliveryRepo: deliveryRepo,
 		txManager:    txManager,
 		logger:       logger,
@@ -194,7 +194,7 @@ func (w *Worker) handleMessage(ctx context.Context, msg Message) error {
 		return fmt.Errorf("%w: unmarshal notification event: %v", ErrNonRetryable, err)
 	}
 
-	if err := validateEmailEvent(event); err != nil {
+	if err := validateEvent(event); err != nil {
 		w.metrics.EventInvalid("validation_failed")
 
 		w.logger.WarnContext(ctx, "notification_event_validation_failed",
@@ -225,81 +225,115 @@ func (w *Worker) handleMessage(ctx context.Context, msg Message) error {
 		slog.String("key", string(msg.Key)),
 	)
 
-	shouldSend, err := w.ensureDelivery(ctx, event)
-	if err != nil {
-		return err
-	}
-
-	if !shouldSend {
-		w.logger.InfoContext(ctx, "notification_event_skipped",
-			slog.String("event_id", event.EventID),
-			slog.String("business_key", event.BusinessKey),
-			slog.String("notification_type", event.NotificationType),
-			slog.String("reason", "duplicate_or_terminal_state"),
-		)
-
+	channels := w.router.DetermineChannels(event.NotificationType)
+	if len(channels) == 0 {
+		w.logger.WarnContext(ctx, "no_channels_determined_for_event", slog.String("notification_type", event.NotificationType))
 		return nil
 	}
 
-	if isExpired(event.ValidUntil) {
-		if err := w.deliveryRepo.MarkExpired(
-			ctx,
-			event.EventID,
-			"delivery expired before first send",
-		); err != nil {
-			return fmt.Errorf("mark delivery expired: %w", err)
+	for _, channelType := range channels {
+		factory, ok := w.factories[channelType]
+		if !ok {
+			w.logger.ErrorContext(ctx, "factory_not_found_for_channel", slog.String("channel", channelType))
+			continue
 		}
 
-		w.metrics.Expired(event.NotificationType)
-
-		w.logger.InfoContext(ctx, "notification_delivery_expired",
-			slog.String("event_id", event.EventID),
-			slog.String("business_key", event.BusinessKey),
-			slog.String("notification_type", event.NotificationType),
-			slog.String("reason", "expired_before_first_send"),
-		)
-
-		return nil
-	}
-
-	if err := w.emailSender.Send(
-		ctx,
-		event.Template,
-		event.Recipient.Email,
-		event.Recipient.Name,
-		event.Data,
-	); err != nil {
-		w.metrics.EmailFailed(event.NotificationType)
-
-		if updateErr := w.handleSendFailure(ctx, event.EventID, err.Error()); updateErr != nil {
-			return fmt.Errorf("send email failed: %w; update delivery retry state failed: %v", err, updateErr)
+		var recipientStr string
+		if channelType == ChannelEmail {
+			recipientStr = event.Recipient.Email
+			// add name to data for template rendering
+			if event.Data == nil {
+				event.Data = make(map[string]any)
+			}
+			event.Data["name"] = event.Recipient.Name
 		}
 
-		w.logger.WarnContext(ctx, "notification_email_send_failed",
+		if err := factory.Validator().Validate(recipientStr); err != nil {
+			w.logger.WarnContext(ctx, "channel_validation_failed", slog.String("channel", channelType), slog.String("error", err.Error()))
+			continue
+		}
+
+		shouldSend, err := w.ensureDelivery(ctx, event, channelType)
+		if err != nil {
+			w.logger.ErrorContext(ctx, "ensure_delivery_failed", slog.String("channel", channelType), slog.String("error", err.Error()))
+			return fmt.Errorf("ensure delivery for channel %s: %w", channelType, err)
+		}
+
+		if !shouldSend {
+			w.logger.InfoContext(ctx, "notification_event_skipped",
+				slog.String("event_id", event.EventID),
+				slog.String("business_key", event.BusinessKey),
+				slog.String("notification_type", event.NotificationType),
+				slog.String("channel", channelType),
+				slog.String("reason", "duplicate_or_terminal_state"),
+			)
+			continue
+		}
+
+		if isExpired(event.ValidUntil) {
+			if err := w.deliveryRepo.MarkExpired(ctx, event.EventID, "delivery expired before first send"); err != nil {
+				return fmt.Errorf("mark delivery expired for channel %s: %w", channelType, err)
+			}
+
+			w.metrics.Expired(event.NotificationType)
+
+			w.logger.InfoContext(ctx, "notification_delivery_expired",
+				slog.String("event_id", event.EventID),
+				slog.String("business_key", event.BusinessKey),
+				slog.String("notification_type", event.NotificationType),
+				slog.String("channel", channelType),
+				slog.String("reason", "expired_before_first_send"),
+			)
+
+			continue
+		}
+
+		if err := factory.RateLimiter().Wait(ctx); err != nil {
+			w.logger.WarnContext(ctx, "rate_limiter_error", slog.String("channel", channelType), slog.String("error", err.Error()))
+		}
+
+		payload, err := factory.Template().Render(event.Template, event.Data)
+		if err != nil {
+			w.logger.ErrorContext(ctx, "template_render_failed", slog.String("channel", channelType), slog.String("error", err.Error()))
+			w.handleSendFailure(ctx, event.EventID, err.Error())
+			continue
+		}
+
+		if err := factory.Sender().Send(ctx, recipientStr, payload); err != nil {
+			w.metrics.DeliveryFailed(event.NotificationType, channelType)
+			if updateErr := w.handleSendFailure(ctx, event.EventID, err.Error()); updateErr != nil {
+				return fmt.Errorf("send failed for %s but update delivery state failed: %v", channelType, updateErr)
+			}
+
+			w.logger.WarnContext(ctx, "notification_send_failed",
+				slog.String("event_id", event.EventID),
+				slog.String("business_key", event.BusinessKey),
+				slog.String("notification_type", event.NotificationType),
+				slog.String("template", event.Template),
+				slog.String("channel", channelType),
+				slog.String("recipient", recipientStr),
+				slog.String("error", err.Error()),
+			)
+
+			continue
+		}
+
+		if err := w.deliveryRepo.MarkSent(ctx, event.EventID); err != nil {
+			w.logger.ErrorContext(ctx, "mark_sent_failed", slog.String("channel", channelType), slog.String("error", err.Error()))
+			return fmt.Errorf("mark sent for channel %s: %w", channelType, err)
+		}
+
+		w.metrics.DeliverySent(event.NotificationType, channelType)
+
+		w.logger.InfoContext(ctx, "notification_delivery_sent",
 			slog.String("event_id", event.EventID),
 			slog.String("business_key", event.BusinessKey),
 			slog.String("notification_type", event.NotificationType),
 			slog.String("template", event.Template),
-			slog.String("recipient_email", event.Recipient.Email),
-			slog.String("error", err.Error()),
+			slog.String("channel", channelType),
+			slog.String("recipient", recipientStr),
 		)
-
-		return nil
 	}
-
-	if err := w.deliveryRepo.MarkSent(ctx, event.EventID); err != nil {
-		return fmt.Errorf("mark delivery sent: %w", err)
-	}
-
-	w.metrics.EmailSent(event.NotificationType)
-
-	w.logger.InfoContext(ctx, "notification_email_sent",
-		slog.String("event_id", event.EventID),
-		slog.String("business_key", event.BusinessKey),
-		slog.String("notification_type", event.NotificationType),
-		slog.String("template", event.Template),
-		slog.String("recipient_email", event.Recipient.Email),
-	)
 
 	w.logger.InfoContext(ctx, "notification_event_handled",
 		slog.String("event_id", event.EventID),
@@ -314,7 +348,7 @@ func (w *Worker) handleMessage(ctx context.Context, msg Message) error {
 	return nil
 }
 
-func (w *Worker) ensureDelivery(ctx context.Context, event NotificationRequestedEvent) (bool, error) {
+func (w *Worker) ensureDelivery(ctx context.Context, event NotificationRequestedEvent, channel string) (bool, error) {
 	data, err := json.Marshal(event.Data)
 	if err != nil {
 		w.metrics.EventInvalid("marshal_delivery_data_failed")
@@ -328,7 +362,7 @@ func (w *Worker) ensureDelivery(ctx context.Context, event NotificationRequested
 		EventID:          event.EventID,
 		BusinessKey:      event.BusinessKey,
 		NotificationType: event.NotificationType,
-		Channel:          model.DeliveryChannelEmail,
+		Channel:          channel,
 		RecipientEmail:   event.Recipient.Email,
 		RecipientName:    event.Recipient.Name,
 		Template:         event.Template,
@@ -426,21 +460,13 @@ func (w *Worker) ensureDelivery(ctx context.Context, event NotificationRequested
 
 	return shouldSend, nil
 }
-
-func validateEmailEvent(event NotificationRequestedEvent) error {
+func validateEvent(event NotificationRequestedEvent) error {
 	if event.EventID == "" {
 		return fmt.Errorf("event_id is required")
 	}
 	if event.NotificationType == "" {
 		return fmt.Errorf("notification_type is required")
 	}
-	if event.Template == "" {
-		return fmt.Errorf("template is required")
-	}
-	if event.Recipient.Email == "" {
-		return fmt.Errorf("recipient email is required")
-	}
-
 	return nil
 }
 

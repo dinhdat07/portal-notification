@@ -1,12 +1,12 @@
 package metrics
 
-type EmailMetrics interface {
+type WorkerMetrics interface {
 	EventConsumed(notificationType string)
 	EventInvalid(reason string)
 	DeliveryCreated(notificationType string)
 	DeliveryDuplicate(status string)
-	EmailSent(notificationType string)
-	EmailFailed(notificationType string)
+	DeliverySent(notificationType string, channel string)
+	DeliveryFailed(notificationType string, channel string)
 	RetryScheduled(notificationType string)
 	DeadLettered(notificationType string)
 	Expired(notificationType string)
@@ -17,12 +17,12 @@ type RetryMetrics interface {
 	RetryBatchClaimed(count int)
 	Expired(notificationType string)
 	DeadLettered(notificationType string)
-	EmailFailed(notificationType string)
-	EmailSent(notificationType string)
+	DeliveryFailed(notificationType string, channel string)
+	DeliverySent(notificationType string, channel string)
 	RetryScheduled(notificationType string)
 }
 
 type Metrics interface {
-	EmailMetrics
+	WorkerMetrics
 	RetryMetrics
 }

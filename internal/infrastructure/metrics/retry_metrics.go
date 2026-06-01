@@ -17,21 +17,21 @@ func (m *PrometheusRetryMetrics) RetryBatchClaimed(count int) {
 }
 
 func (m *PrometheusRetryMetrics) Expired(notificationType string) {
-	m.reg.notificationEmailExpiredTotal.WithLabelValues(normalizeLabel(notificationType)).Inc()
+	m.reg.notificationDeliveryExpiredTotal.WithLabelValues(normalizeLabel(notificationType)).Inc()
 }
 
 func (m *PrometheusRetryMetrics) DeadLettered(notificationType string) {
-	m.reg.notificationEmailDeadLetteredTotal.WithLabelValues(normalizeLabel(notificationType)).Inc()
+	m.reg.notificationDeliveryDeadLetteredTotal.WithLabelValues(normalizeLabel(notificationType)).Inc()
 }
 
-func (m *PrometheusRetryMetrics) EmailFailed(notificationType string) {
-	m.reg.notificationEmailFailedTotal.WithLabelValues(normalizeLabel(notificationType)).Inc()
+func (m *PrometheusRetryMetrics) DeliveryFailed(notificationType string, channel string) {
+	m.reg.notificationDeliveryFailedTotal.WithLabelValues(normalizeLabel(notificationType), normalizeLabel(channel)).Inc()
 }
 
-func (m *PrometheusRetryMetrics) EmailSent(notificationType string) {
-	m.reg.notificationEmailSentTotal.WithLabelValues(normalizeLabel(notificationType)).Inc()
+func (m *PrometheusRetryMetrics) DeliverySent(notificationType string, channel string) {
+	m.reg.notificationDeliverySentTotal.WithLabelValues(normalizeLabel(notificationType), normalizeLabel(channel)).Inc()
 }
 
 func (m *PrometheusRetryMetrics) RetryScheduled(notificationType string) {
-	m.reg.notificationEmailRetryScheduledTotal.WithLabelValues(normalizeLabel(notificationType)).Inc()
+	m.reg.notificationDeliveryRetryScheduledTotal.WithLabelValues(normalizeLabel(notificationType)).Inc()
 }

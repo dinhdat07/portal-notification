@@ -12,9 +12,10 @@ func NewEmailRenderer() *EmailRenderer {
 	return &EmailRenderer{}
 }
 
-func (r *EmailRenderer) Render(template string, name string, data map[string]any) (Message, error) {
+func (r *EmailRenderer) Render(template string, data map[string]any) (any, error) {
 	url, _ := data["url"].(string)
 	username, _ := data["username"].(string)
+	name, _ := data["name"].(string)
 
 	displayName := fallbackName(name)
 	if displayName == "there" && strings.TrimSpace(username) != "" {

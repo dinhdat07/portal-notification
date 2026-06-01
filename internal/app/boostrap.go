@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"portal-notification/config"
+	"portal-notification/internal/channel"
 	emailchannel "portal-notification/internal/channel/email"
 	kafkax "portal-notification/internal/infrastructure/kafka"
 	logger "portal-notification/internal/infrastructure/logger"
@@ -89,15 +90,26 @@ func New() (*App, error) {
 		cfg.SMTP.CircuitBreaker,
 	)
 	slogLogger.Info("email_circuit_breaker_initialized")
-	emailMetrics, retryMetrics := metricsx.NewPrometheusMetrics(prometheus.DefaultRegisterer)
+	workerMetrics, retryMetrics := metricsx.NewPrometheusMetrics(prometheus.DefaultRegisterer)
 
-	emailRenderer := emailchannel.NewEmailRenderer()
-	emailSender := emailchannel.NewSender(emailRenderer, emailCBProxy)
-	slogLogger.Info("email_sender_initialized")
+	emailSender := emailchannel.NewSender(emailCBProxy)
+	emailFactory := emailchannel.NewFactory(emailSender)
+	factories := map[string]channel.NotificationFactory{
+		emailworker.ChannelEmail: emailFactory,
+	}
+
+	router := emailworker.NewRouter()
 
 	consumer := kafkax.NewConsumer(reader)
 
-	worker := emailworker.NewWorker(consumer, emailSender, txManager, deliveryRepo, slogLogger, emailMetrics,
+	worker := emailworker.NewWorker(
+		consumer,
+		router,
+		factories,
+		txManager,
+		deliveryRepo,
+		slogLogger,
+		workerMetrics,
 		emailworker.Config{
 			FetchRetryInitialBackoff:    cfg.Worker.FetchRetryInitialBackoff,
 			FetchRetryMaxBackoff:        cfg.Worker.FetchRetryMaxBackoff,
@@ -109,7 +121,7 @@ func New() (*App, error) {
 	)
 	slogLogger.Info("email_notification_worker_initialized")
 
-	retryWorker := emailworker.NewRetryWorker(emailSender, deliveryRepo, slogLogger, retryMetrics,
+	retryWorker := emailworker.NewRetryWorker(factories, deliveryRepo, slogLogger, retryMetrics,
 		emailworker.RetryWorkerConfig{
 			Interval:                    cfg.Worker.RetryWorkerInterval,
 			BatchSize:                   cfg.Worker.RetryWorkerBatchSize,
