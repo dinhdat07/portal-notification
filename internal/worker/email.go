@@ -225,7 +225,7 @@ func (w *Worker) handleMessage(ctx context.Context, msg Message) error {
 		slog.String("key", string(msg.Key)),
 	)
 
-	channels := w.router.DetermineChannels(event.NotificationType)
+	channels := w.router.DetermineChannels(event)
 	if len(channels) == 0 {
 		w.logger.WarnContext(ctx, "no_channels_determined_for_event", slog.String("notification_type", event.NotificationType))
 		return nil

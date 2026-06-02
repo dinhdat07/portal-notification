@@ -16,6 +16,8 @@ func (r *EmailRenderer) Render(template string, data map[string]any) (any, error
 	url, _ := data["url"].(string)
 	username, _ := data["username"].(string)
 	name, _ := data["name"].(string)
+	title, _ := data["title"].(string)
+	content, _ := data["content"].(string)
 
 	displayName := fallbackName(name)
 	if displayName == "there" && strings.TrimSpace(username) != "" {
@@ -29,6 +31,8 @@ func (r *EmailRenderer) Render(template string, data map[string]any) (any, error
 		return renderResetPassword(displayName, url), nil
 	case TemplateSetPassword:
 		return renderSetPassword(displayName, url), nil
+	case TemplateAnnouncement:
+		return renderAnnouncement(displayName, title, content), nil
 	default:
 		return Message{}, fmt.Errorf("unsupported email template: %s", template)
 	}
@@ -151,6 +155,44 @@ func renderSetPassword(name string, url string) Message {
 		html.EscapeString(url),
 		html.EscapeString(url),
 		html.EscapeString(url),
+	)
+
+	return Message{
+		Subject:  subject,
+		TextBody: textBody,
+		HTMLBody: htmlBody,
+	}
+}
+
+func renderAnnouncement(name string, title string, content string) Message {
+	subject := title
+
+	textBody := fmt.Sprintf(
+		"Hello %s,\n\n%s\n\n%s\n",
+		fallbackName(name),
+		title,
+		content,
+	)
+
+	htmlBody := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>%s</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #222;">
+<p>Hello %s,</p>
+<div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; border-left: 4px solid #3b82f6;">
+	<h3 style="margin-top: 0;">%s</h3>
+	<p style="white-space: pre-wrap;">%s</p>
+</div>
+</body>
+</html>`,
+		html.EscapeString(title),
+		html.EscapeString(fallbackName(name)),
+		html.EscapeString(title),
+		html.EscapeString(content),
 	)
 
 	return Message{
