@@ -69,7 +69,7 @@ func New() (*App, error) {
 
 	reader := kafkax.NewReader(
 		cfg.Kafka.Brokers,
-		[]string{cfg.Kafka.NotificationRequestedTopic},
+		[]string{cfg.Kafka.NotificationRequestedTopic, cfg.Kafka.EndpointRegisteredTopic},
 		cfg.Kafka.ConsumerGroup,
 	)
 	slogLogger.Info("kafka_reader_initialized")
@@ -146,6 +146,7 @@ func New() (*App, error) {
 		factories,
 		txManager,
 		deliveryRepo,
+		endpointRepo,
 		slogLogger,
 		workerMetrics,
 		emailworker.Config{

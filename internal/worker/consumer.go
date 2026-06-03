@@ -49,6 +49,7 @@ type Worker struct {
 	router       *Router
 	factories    map[string]channel.NotificationFactory
 	deliveryRepo repository.DeliveryRepository
+	endpointRepo repository.EndpointRepository
 	txManager    repository.TxManager
 	logger       *slog.Logger
 	metrics      notificationmetrics.WorkerMetrics
@@ -61,6 +62,7 @@ func NewWorker(
 	factories map[string]channel.NotificationFactory,
 	txManager repository.TxManager,
 	deliveryRepo repository.DeliveryRepository,
+	endpointRepo repository.EndpointRepository,
 	logger *slog.Logger,
 	metrics notificationmetrics.WorkerMetrics,
 	cfg Config,
@@ -95,6 +97,7 @@ func NewWorker(
 		router:       router,
 		factories:    factories,
 		deliveryRepo: deliveryRepo,
+		endpointRepo: endpointRepo,
 		txManager:    txManager,
 		logger:       logger,
 		metrics:      metrics,
@@ -180,6 +183,16 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) handleMessage(ctx context.Context, msg Message) error {
+	// Route messages based on their Kafka Topic
+	switch msg.Topic {
+	case "notification.endpoint.registered":
+		return w.handleEndpointRegisteredMessage(ctx, msg)
+	default:
+		return w.handleNotificationRequestedMessage(ctx, msg)
+	}
+}
+
+func (w *Worker) handleNotificationRequestedMessage(ctx context.Context, msg Message) error {
 	var event NotificationRequestedEvent
 	if err := json.Unmarshal(msg.Value, &event); err != nil {
 		w.metrics.EventInvalid("unmarshal_failed")
@@ -346,6 +359,51 @@ func (w *Worker) handleMessage(ctx context.Context, msg Message) error {
 		slog.String("topic", msg.Topic),
 		slog.Int("partition", int(msg.Partition)),
 		slog.Int64("offset", msg.Offset),
+	)
+
+	return nil
+}
+
+type NotificationEndpointRegisteredPayload struct {
+	UserID     string  `json:"user_id"`
+	Provider   string  `json:"provider"`
+	Endpoint   string  `json:"endpoint"`
+	DeviceName *string `json:"device_name,omitempty"`
+}
+
+func (w *Worker) handleEndpointRegisteredMessage(ctx context.Context, msg Message) error {
+	var event NotificationEndpointRegisteredPayload
+	if err := json.Unmarshal(msg.Value, &event); err != nil {
+		w.logger.ErrorContext(ctx, "failed_to_unmarshal_endpoint_registered_event", slog.String("error", err.Error()))
+		return fmt.Errorf("%w: unmarshal endpoint event: %v", ErrNonRetryable, err)
+	}
+
+	userID, err := uuid.Parse(event.UserID)
+	if err != nil {
+		w.logger.ErrorContext(ctx, "invalid_user_id_in_endpoint_registered_event", slog.String("user_id", event.UserID), slog.String("error", err.Error()))
+		return fmt.Errorf("%w: invalid user_id: %v", ErrNonRetryable, err)
+	}
+
+	endpoint := &model.NotificationEndpoint{
+		UserID:     userID,
+		Provider:   model.EndpointProvider(event.Provider),
+		Endpoint:   event.Endpoint,
+		DeviceName: event.DeviceName,
+		IsActive:   true,
+	}
+
+	// Assuming a verified_at should be set upon registration
+	now := time.Now().UTC()
+	endpoint.VerifiedAt = &now
+
+	if err := w.endpointRepo.Upsert(ctx, endpoint); err != nil {
+		w.logger.ErrorContext(ctx, "failed_to_upsert_endpoint", slog.String("error", err.Error()))
+		return err // Retryable
+	}
+
+	w.logger.InfoContext(ctx, "endpoint_registered_successfully",
+		slog.String("user_id", event.UserID),
+		slog.String("provider", event.Provider),
 	)
 
 	return nil
