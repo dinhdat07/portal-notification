@@ -239,13 +239,16 @@ func (w *Worker) handleMessage(ctx context.Context, msg Message) error {
 		}
 
 		var recipientStr string
-		if channelType == ChannelEmail {
+		switch channelType {
+		case ChannelEmail:
 			recipientStr = event.Recipient.Email
 			// add name to data for template rendering
 			if event.Data == nil {
 				event.Data = make(map[string]any)
 			}
 			event.Data["name"] = event.Recipient.Name
+		case ChannelTelegram, ChannelPush:
+			recipientStr = event.Recipient.UserID
 		}
 
 		if err := factory.Validator().Validate(recipientStr); err != nil {

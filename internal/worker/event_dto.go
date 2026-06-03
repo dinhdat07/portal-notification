@@ -9,6 +9,7 @@ const (
 const (
 	ChannelEmail    = "email"
 	ChannelTelegram = "telegram"
+	ChannelPush     = "push"
 )
 
 const (

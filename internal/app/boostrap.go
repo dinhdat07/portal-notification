@@ -9,14 +9,19 @@ import (
 	emailchannel "portal-notification/internal/channel/email"
 	kafkax "portal-notification/internal/infrastructure/kafka"
 	logger "portal-notification/internal/infrastructure/logger"
-	metricsx "portal-notification/internal/infrastructure/metrics"
+	metricsx 	"portal-notification/internal/infrastructure/metrics"
 	"portal-notification/internal/infrastructure/database"
 	smtpx "portal-notification/internal/infrastructure/smtp"
 	"portal-notification/internal/model"
 	"portal-notification/internal/repository/impl"
 	emailworker "portal-notification/internal/worker"
+	"portal-notification/internal/channel/telegram"
+	"portal-notification/internal/channel/push"
 	"time"
 
+	firebase "firebase.google.com/go/v4"
+	"firebase.google.com/go/v4/messaging"
+	"google.golang.org/api/option"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -58,8 +63,8 @@ func New() (*App, error) {
 		return nil, err
 	}
 
-	if err := db.AutoMigrate(&model.NotificationDelivery{}); err != nil {
-		return nil, fmt.Errorf("auto migrate notification deliveries: %w", err)
+	if err := db.AutoMigrate(&model.NotificationDelivery{}, &model.NotificationEndpoint{}); err != nil {
+		return nil, fmt.Errorf("auto migrate: %w", err)
 	}
 
 	reader := kafkax.NewReader(
@@ -70,6 +75,7 @@ func New() (*App, error) {
 	slogLogger.Info("kafka_reader_initialized")
 
 	deliveryRepo := impl.NewGormDeliveryRepository(db)
+	endpointRepo := impl.NewGormEndpointRepository(db)
 	txManager := impl.NewGormTxManager(db)
 
 	smtpMailer := smtpx.NewMailer(smtpx.Config{
@@ -93,8 +99,41 @@ func New() (*App, error) {
 
 	emailSender := emailchannel.NewSender(emailCBProxy)
 	emailFactory := emailchannel.NewFactory(emailSender)
+
+	var fcmClient *messaging.Client
+	if cfg.Firebase.CredentialsFile != "" {
+		opt := option.WithAuthCredentialsFile(option.ServiceAccount, cfg.Firebase.CredentialsFile)
+		fbApp, err := firebase.NewApp(ctx, nil, opt)
+		if err != nil {
+			slogLogger.Warn("failed to initialize firebase app", slog.String("error", err.Error()))
+		} else {
+			fcmClient, err = fbApp.Messaging(ctx)
+			if err != nil {
+				slogLogger.Warn("failed to initialize firebase messaging", slog.String("error", err.Error()))
+			}
+		}
+	} else {
+		slogLogger.Warn("firebase_credentials_file_not_set")
+	}
+
+	telegramFactory := telegram.NewFactory(
+		telegram.NewValidator(),
+		telegram.NewTemplate(),
+		telegram.NewSender(endpointRepo, cfg.Telegram.BotToken, cfg.Telegram.APIURL),
+		telegram.NewRateLimiter(),
+	)
+
+	pushFactory := push.NewFactory(
+		push.NewValidator(),
+		push.NewTemplate(),
+		push.NewSender(endpointRepo, fcmClient),
+		push.NewRateLimiter(),
+	)
+
 	factories := map[string]channel.NotificationFactory{
-		emailworker.ChannelEmail: emailFactory,
+		emailworker.ChannelEmail:    emailFactory,
+		emailworker.ChannelTelegram: telegramFactory,
+		emailworker.ChannelPush:     pushFactory,
 	}
 
 	router := emailworker.NewRouter()
