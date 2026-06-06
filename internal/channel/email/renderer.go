@@ -33,6 +33,12 @@ func (r *EmailRenderer) Render(template string, data map[string]any) (any, error
 		return renderSetPassword(displayName, url), nil
 	case TemplateAnnouncement:
 		return renderAnnouncement(displayName, title, content), nil
+	case TemplateServerReport:
+		correlationId, _ := data["correlation_id"].(string)
+		startTimeUnix, _ := data["start_time_unix"].(float64)
+		endTimeUnix, _ := data["end_time_unix"].(float64)
+		uptimePercentage, _ := data["uptime_percentage"].(float64)
+		return renderServerReport(displayName, correlationId, startTimeUnix, endTimeUnix, uptimePercentage), nil
 	default:
 		return Message{}, fmt.Errorf("unsupported email template: %s", template)
 	}
@@ -208,4 +214,47 @@ func fallbackName(name string) string {
 		return "there"
 	}
 	return name
+}
+
+func renderServerReport(name string, correlationId string, startTimeUnix float64, endTimeUnix float64, uptime float64) Message {
+	subject := "Your Server Uptime Report"
+
+	textBody := fmt.Sprintf(
+		"Hello %s,\n\nYour requested server uptime report is ready.\n\nCorrelation ID: %s\nPeriod: %v to %v\nUptime: %.2f%%\n",
+		fallbackName(name),
+		correlationId,
+		startTimeUnix,
+		endTimeUnix,
+		uptime,
+	)
+
+	htmlBody := fmt.Sprintf(`
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<title>Server Uptime Report</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #222;">
+<p>Hello %s,</p>
+<div style="background-color: #f9fafb; padding: 16px; border-radius: 8px; border-left: 4px solid #10b981;">
+	<h3 style="margin-top: 0;">Server Uptime Report</h3>
+	<p><strong>Correlation ID:</strong> %s</p>
+	<p><strong>Period (Unix):</strong> %v to %v</p>
+	<p><strong>Uptime:</strong> %.2f%%</p>
+</div>
+</body>
+</html>`,
+		html.EscapeString(fallbackName(name)),
+		html.EscapeString(correlationId),
+		startTimeUnix,
+		endTimeUnix,
+		uptime,
+	)
+
+	return Message{
+		Subject:  subject,
+		TextBody: textBody,
+		HTMLBody: htmlBody,
+	}
 }
