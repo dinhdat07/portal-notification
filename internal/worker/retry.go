@@ -10,6 +10,7 @@ import (
 	notificationmetrics "portal-notification/internal/metrics"
 	"portal-notification/internal/model"
 	"portal-notification/internal/repository"
+	"portal-notification/internal/channel"
 )
 
 type RetryWorkerConfig struct {
@@ -22,7 +23,7 @@ type RetryWorkerConfig struct {
 }
 
 type RetryWorker struct {
-	emailSender  EmailSender
+	factories    map[string]channel.NotificationFactory
 	deliveryRepo repository.DeliveryRepository
 	logger       *slog.Logger
 	metrics      notificationmetrics.RetryMetrics
@@ -30,7 +31,7 @@ type RetryWorker struct {
 }
 
 func NewRetryWorker(
-	emailSender EmailSender,
+	factories map[string]channel.NotificationFactory,
 	deliveryRepo repository.DeliveryRepository,
 	logger *slog.Logger,
 	metrics notificationmetrics.RetryMetrics,
@@ -62,7 +63,7 @@ func NewRetryWorker(
 	}
 
 	return &RetryWorker{
-		emailSender:  emailSender,
+		factories:    factories,
 		deliveryRepo: deliveryRepo,
 		logger:       logger,
 		metrics:      metrics,
@@ -132,30 +133,48 @@ func (w *RetryWorker) processDelivery(ctx context.Context, delivery model.Notifi
 		return nil
 	}
 
-	w.logger.Info("retrying_delivery", slog.String("event_id", delivery.EventID), slog.Int("retry_count", delivery.RetryCount), slog.String("recipient_email", delivery.RecipientEmail))
+	factory, ok := w.factories[delivery.Channel]
+	if !ok {
+		w.logger.Error("factory_not_found_for_channel_in_retry", slog.String("event_id", delivery.EventID), slog.String("channel", delivery.Channel))
+		return fmt.Errorf("factory not found for channel: %s", delivery.Channel)
+	}
 
-	if err := w.emailSender.Send(
-		ctx,
-		delivery.Template,
-		delivery.RecipientEmail,
-		delivery.RecipientName,
-		data,
-	); err != nil {
-		w.metrics.EmailFailed(delivery.NotificationType)
+	var recipientStr string
+	if delivery.Channel == ChannelEmail {
+		recipientStr = delivery.RecipientEmail
+		data["name"] = delivery.RecipientName
+	}
+
+	w.logger.Info("retrying_delivery", slog.String("event_id", delivery.EventID), slog.Int("retry_count", delivery.RetryCount), slog.String("recipient", recipientStr))
+
+	if err := factory.RateLimiter().Wait(ctx); err != nil {
+		w.logger.Warn("rate_limiter_error_in_retry", slog.String("event_id", delivery.EventID), slog.Any("error", err))
+	}
+
+	payload, err := factory.Template().Render(delivery.Template, data)
+	if err != nil {
+		w.logger.Error("template_render_failed_in_retry", slog.String("event_id", delivery.EventID), slog.Any("error", err))
+		w.handleRetryFailure(ctx, delivery, err.Error())
+		return err
+	}
+
+	if err := factory.Sender().Send(ctx, recipientStr, payload); err != nil {
+		w.metrics.DeliveryFailed(delivery.NotificationType, delivery.Channel)
 		if updateErr := w.handleRetryFailure(ctx, delivery, err.Error()); updateErr != nil {
-			return fmt.Errorf("send email retry failed: %w; update delivery retry state failed: %v", err, updateErr)
+			return fmt.Errorf("send notification retry failed: %w; update delivery retry state failed: %v", err, updateErr)
 		}
 		return err
 	}
 
-	w.metrics.EmailSent(delivery.NotificationType)
+	w.metrics.DeliverySent(delivery.NotificationType, delivery.Channel)
 
-	w.logger.Info("notification_email_sent",
+	w.logger.Info("notification_sent_in_retry",
 		slog.String("event_id", delivery.EventID),
 		slog.String("business_key", delivery.BusinessKey),
 		slog.String("notification_type", delivery.NotificationType),
 		slog.String("template", delivery.Template),
-		slog.String("recipient_email", delivery.RecipientEmail),
+		slog.String("channel", delivery.Channel),
+		slog.String("recipient", recipientStr),
 	)
 
 	w.logger.Info("retry_delivery_successful", slog.String("event_id", delivery.EventID))

@@ -10,6 +10,8 @@ type Config struct {
 	Kafka       KafkaConfig
 	SMTP        SMTPConfig
 	Worker      WorkerConfig
+	Telegram    TelegramConfig
+	Firebase    FirebaseConfig
 	DBUrl       string
 	Logger      LoggerConfig
 	MetricsPort string
@@ -18,10 +20,12 @@ type Config struct {
 func Load() Config {
 	loadEnv()
 	return Config{
-		Kafka:  LoadKafkaConfig(),
-		SMTP:   LoadSMTPConfig(),
-		Worker: LoadWorkerConfig(),
-		DBUrl:  getEnv("DB_URL", ""),
+		Kafka:    LoadKafkaConfig(),
+		SMTP:     LoadSMTPConfig(),
+		Worker:   LoadWorkerConfig(),
+		Telegram: LoadTelegramConfig(),
+		Firebase: LoadFirebaseConfig(),
+		DBUrl:    getEnv("DB_URL", ""),
 		Logger: LoggerConfig{
 			Env:    getEnv("ENV", "development"),
 			Level:  getEnv("LOG_LEVEL", "info"),

@@ -9,16 +9,16 @@ type prometheusMetricsRegistry struct {
 	notificationEventsInvalidTotal       *prometheus.CounterVec
 	notificationDeliveryCreatedTotal     *prometheus.CounterVec
 	notificationDeliveryDuplicateTotal   *prometheus.CounterVec
-	notificationEmailSentTotal           *prometheus.CounterVec
-	notificationEmailFailedTotal         *prometheus.CounterVec
-	notificationEmailRetryScheduledTotal *prometheus.CounterVec
-	notificationEmailDeadLetteredTotal   *prometheus.CounterVec
-	notificationEmailExpiredTotal        *prometheus.CounterVec
-	notificationEmailSupersededTotal     *prometheus.CounterVec
+	notificationDeliverySentTotal           *prometheus.CounterVec
+	notificationDeliveryFailedTotal         *prometheus.CounterVec
+	notificationDeliveryRetryScheduledTotal *prometheus.CounterVec
+	notificationDeliveryDeadLetteredTotal   *prometheus.CounterVec
+	notificationDeliveryExpiredTotal        *prometheus.CounterVec
+	notificationDeliverySupersededTotal     *prometheus.CounterVec
 	notificationRetryBatchClaimedTotal   prometheus.Counter
 }
 
-func NewPrometheusMetrics(registerer prometheus.Registerer) (*PrometheusEmailMetrics, *PrometheusRetryMetrics) {
+func NewPrometheusMetrics(registerer prometheus.Registerer) (*PrometheusWorkerMetrics, *PrometheusRetryMetrics) {
 	if registerer == nil {
 		registerer = prometheus.DefaultRegisterer
 	}
@@ -40,28 +40,28 @@ func NewPrometheusMetrics(registerer prometheus.Registerer) (*PrometheusEmailMet
 			Name: "notification_delivery_duplicate_total",
 			Help: "Total number of duplicate notification events detected and skipped.",
 		}, []string{"status"}),
-		notificationEmailSentTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "notification_email_sent_total",
-			Help: "Total number of notification emails successfully sent via SMTP.",
-		}, []string{"notification_type"}),
-		notificationEmailFailedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "notification_email_failed_total",
-			Help: "Total number of notification email send attempts that failed.",
-		}, []string{"notification_type"}),
-		notificationEmailRetryScheduledTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "notification_email_retry_scheduled_total",
+		notificationDeliverySentTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "notification_delivery_sent_total",
+			Help: "Total number of notification deliveries successfully sent.",
+		}, []string{"notification_type", "channel"}),
+		notificationDeliveryFailedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "notification_delivery_failed_total",
+			Help: "Total number of notification delivery send attempts that failed.",
+		}, []string{"notification_type", "channel"}),
+		notificationDeliveryRetryScheduledTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "notification_delivery_retry_scheduled_total",
 			Help: "Total number of notification deliveries scheduled for retry.",
 		}, []string{"notification_type"}),
-		notificationEmailDeadLetteredTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "notification_email_dead_lettered_total",
+		notificationDeliveryDeadLetteredTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "notification_delivery_dead_lettered_total",
 			Help: "Total number of notification deliveries marked as dead lettered.",
 		}, []string{"notification_type"}),
-		notificationEmailExpiredTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "notification_email_expired_total",
+		notificationDeliveryExpiredTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "notification_delivery_expired_total",
 			Help: "Total number of notification deliveries marked as expired.",
 		}, []string{"notification_type"}),
-		notificationEmailSupersededTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "notification_email_superseded_total",
+		notificationDeliverySupersededTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "notification_delivery_superseded_total",
 			Help: "Total number of notification deliveries superseded by newer events.",
 		}, []string{"notification_type"}),
 		notificationRetryBatchClaimedTotal: prometheus.NewCounter(prometheus.CounterOpts{
@@ -75,16 +75,16 @@ func NewPrometheusMetrics(registerer prometheus.Registerer) (*PrometheusEmailMet
 		reg.notificationEventsInvalidTotal,
 		reg.notificationDeliveryCreatedTotal,
 		reg.notificationDeliveryDuplicateTotal,
-		reg.notificationEmailSentTotal,
-		reg.notificationEmailFailedTotal,
-		reg.notificationEmailRetryScheduledTotal,
-		reg.notificationEmailDeadLetteredTotal,
-		reg.notificationEmailExpiredTotal,
-		reg.notificationEmailSupersededTotal,
+		reg.notificationDeliverySentTotal,
+		reg.notificationDeliveryFailedTotal,
+		reg.notificationDeliveryRetryScheduledTotal,
+		reg.notificationDeliveryDeadLetteredTotal,
+		reg.notificationDeliveryExpiredTotal,
+		reg.notificationDeliverySupersededTotal,
 		reg.notificationRetryBatchClaimedTotal,
 	)
 
-	return &PrometheusEmailMetrics{reg: reg}, &PrometheusRetryMetrics{reg: reg}
+	return &PrometheusWorkerMetrics{reg: reg}, &PrometheusRetryMetrics{reg: reg}
 }
 
 func normalizeLabel(value string) string {
